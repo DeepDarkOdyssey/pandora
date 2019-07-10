@@ -12,8 +12,9 @@ class MinHash(object):
         self.text = text
         self.tokens = preprocess(text)
         self.ngrams = ngrams
-        self.seed = seed
-        self.hash_size = hash_size
+        self.hash_fns = []
+        for rand_bytes in reproducible_randoms(hash_size, seed):
+            self.hash_fns.append(generate_hash_fn(salt=rand_bytes))
 
     @property
     def shingles(self):
@@ -23,16 +24,15 @@ class MinHash(object):
         return shingles
 
     @property
-    def min_hash(self):
-        min_hash = []
-        for rand_bytes in reproducible_randoms(self.hash_size, self.seed):
+    def signature(self):
+        signature = []
+        for hash_fn in self.hash_fns:
             min_value = float('inf')
-            new_hash = generate_hash_fn(salt=rand_bytes)
             for shingle in self.shingles:
-                value = new_hash(' '.join(shingle))
+                value = hash_fn(' '.join(shingle))
                 min_value = min(min_value, value)
-            min_hash.append(min_value)
-        return min_hash
+            signature.append(min_value)
+        return signature
 
     @classmethod
     def build_signature_matrix(cls, min_hashes) -> np.ndarray:
