@@ -1,11 +1,32 @@
+from typing import Callable
+from hashlib import blake2b
 from string import punctuation
+import random
 import spacy
 
 nlp = spacy.load('en_core_web_sm')
 
 
-def get_hash(salt: str = ''):
-    return lambda x: hash(x + salt)
+def generate_hash_fn(bit_len: int = 64,
+                     salt: bytes = b'',
+                     encoding: str = 'utf8') -> Callable:
+    digest_size = int(bit_len / 8)
+
+    def hash_fn(inputs):
+        if type(inputs) is str:
+            inputs = bytes(inputs.encode(encoding))
+        elif not type(inputs) is bytes:
+            raise TypeError('Hash inputs only support `string` and `bytes`')
+        blake = blake2b(inputs, digest_size=digest_size, salt=salt)
+        return int(blake.hexdigest(), 16)
+
+    return hash_fn
+
+
+def reproducible_randoms(nums: int, seed: int = 0):
+    random.seed(seed)
+    for _ in range(nums):
+        yield str(random.random())[2:].encode()[:16]
 
 
 def preprocess(text: str):
@@ -30,5 +51,5 @@ def preprocess(text: str):
             result.append(token.text)
         else:
             result.append(token.lemma_)
-        
+
     return result
