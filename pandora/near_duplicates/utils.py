@@ -1,41 +1,59 @@
-from typing import Callable
-from hashlib import blake2b
+from typing import Callable, List, Union, Optional
+from hashlib import blake2b, md5
 from string import punctuation
+import numpy as np
 import random
 import spacy
+import time
 
-nlp = spacy.load('en_core_web_sm')
+nlp = spacy.load("en_core_web_sm")
+
+MAX_INT = 2 ** 32 - 1
 
 
-def generate_hash_fn(bit_len: int = 64,
-                     salt: bytes = b'',
-                     encoding: str = 'utf8') -> Callable:
+def generate_hash_fn(
+    bit_len: int = 32, salt: Optional[bytes] = None, encoding: str = "utf8"
+) -> Callable[[Union[str, bytes]], int]:
     digest_size = int(bit_len / 8)
 
-    def hash_fn(inputs):
+    def hash_fn(inputs: Union[str, bytes]) -> int:
         if type(inputs) is str:
             inputs = bytes(inputs.encode(encoding))
         elif not type(inputs) is bytes:
-            raise TypeError('Hash inputs only support `string` and `bytes`')
+            raise TypeError("Hash inputs only support `string` and `bytes`")
         blake = blake2b(inputs, digest_size=digest_size, salt=salt)
         return int(blake.hexdigest(), 16)
 
     return hash_fn
 
 
-def reproducible_randoms(nums: int, seed: int = 0):
+def reproducible_randoms(
+    nums: int, seed: int = 0, dtype="int"
+) -> Union[int, str, bytes]:
     random.seed(seed)
     for _ in range(nums):
-        yield str(random.random())[2:].encode()[:16]
+        rand = random.randint(0, MAX_INT)
+        if dtype == "int":
+            pass
+        elif dtype == "str":
+            rand = str(rand)
+        elif dtype == "bytes":
+            rand = bytes(str(rand).encode())
+        else:
+            raise TypeError("dtype argument only support 'int', 'str' or 'bytes'.")
+        yield rand
 
 
-def preprocess(text: str):
+def preprocess(text: str) -> List[str]:
+    tick = time.time()
     doc = nlp(text)
-    new_text = ''
+    tock = time.time()
+    print(f"Time cost by spacy: {tock-tick:.4f}s")
+    new_text = ""
     prev_end_char = 0
     if len(doc.ents) > 0:
         for ent in doc.ents:
-            new_text += text[prev_end_char:ent.start_char] + ent.label_
+            new_text += text[prev_end_char : ent.start_char] + ent.label_
             prev_end_char = ent.end_char
         new_text += text[prev_end_char:]
     else:
@@ -53,3 +71,45 @@ def preprocess(text: str):
             result.append(token.lemma_)
 
     return result
+
+
+def preprocess_v2(text: str) -> List[str]:
+    doc = nlp(text)
+    result = []
+    entity = ""
+    for token in doc:
+        if token.ent_iob_ == "B":
+            entity = token.ent_type_
+        elif token.ent_iob_ == "I":
+            assert entity == token.ent_type_  # Sanity Check
+        elif token.ent_iob_ == "O":
+            if entity:
+                result.append(entity)
+                entity = ""
+            if not token.text.strip():
+                continue
+            if token.is_punct:
+                continue
+            if token.is_upper:
+                result.append(token.text)
+            else:
+                result.append(token.lemma_)
+        else:
+            raise TypeError('Entity type not in "BIO"')
+
+    return result
+
+
+def jaccard_similarity(set_a: set, set_b: set) -> float:
+    return len(set_a.intersection(set_b)) / len(set_a.union(set_b))
+
+
+if __name__ == "__main__":
+    print(
+        blake2b(
+            b"297577858302751513644148497292049019465169434518109223187548020943465598883",
+            digest_size=int(20 / 8),
+            salt=b"",
+        ).hexdigest()
+    )
+
