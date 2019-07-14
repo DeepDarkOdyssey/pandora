@@ -52,7 +52,7 @@ class LSH(object):
             if hashed_band in self.hash_table:
                 for row_id in self.hash_table[hashed_band].keys():
                     candidates[row_id] += 20
-        candidates = [
+        candidate_ids = [
             row_id for row_id, count in candidates.items() if count >= threshold
         ]
-        return candidates
+        return candidate_ids

@@ -7,10 +7,11 @@ https://towardsdatascience.com/understanding-locality-sensitive-hashing-49f6d1f6
 
 from typing import List, Callable, Iterable, Tuple
 from functools import reduce
-from .utils import generate_hash_fn, reproducible_randoms
-from .utils import preprocess_v2 as preprocess
+from .utils import generate_hash_fn, reproducible_randoms, preprocess
+from loguru import logger
 import numpy as np
 import time
+import sys
 
 
 PRIME = 2 ** 31 - 1
@@ -26,15 +27,15 @@ class MinHash(object):
         random_seed: int = 0,
         signature_len: int = 200,
     ):
-        self.signature_len = signature_len
         self.tokens = tokens
+        self.signature_len = signature_len
 
-        # tick = time.time()
+        tick = time.time()
         self.shingles = self.get_shingles(ngrams)
-        # tock = time.time()
-        # print(f"Time consumed by generating singles {tock - tick:.6f}s")
+        tock = time.time()
+        logger.trace(f"Time consumed by generating singles {tock - tick:.6f}s")
 
-        # tick = time.time()
+        tick = time.time()
         if permutation_way == "perm":
             self.perms = np.array(
                 [
@@ -62,13 +63,13 @@ class MinHash(object):
             self.perms = None
         else:
             raise ValueError("Permutation way only support 'perm' or 'hash'.")
-        # tock = time.time()
-        # print(f"Time consumed by generating hash functions {tock - tick:.6f}s")
+        tock = time.time()
+        logger.trace(f"Time consumed by generating hash functions {tock - tick:.6f}s")
 
-        # tick = time.time()
+        tick = time.time()
         self.signature = self.get_signature()
-        # tock = time.time()
-        # print(f"Time consumed by generating signature {tock - tick:.6f}s")
+        tock = time.time()
+        logger.trace(f"Time consumed by generating signature {tock - tick:.6f}s")
 
     def __len__(self):
         return self.signature_len
@@ -105,14 +106,9 @@ class MinHash(object):
         index = np.where(sims > threshold)
         return [(i, sims[i]) for i in index[0]]
 
-    @classmethod
-    def build_signature_matrix(cls, min_hashes: List) -> np.ndarray:
-        return np.vstack([min_hash.signature for min_hash in min_hashes])
-
-    @classmethod
-    def hash_sim(cls, min_hash_a, min_hash_b) -> float:
-        assert len(min_hash_a) == len(min_hash_b)
-        return np.sum(min_hash_a.signature == min_hash_b.signature) / len(min_hash_a)
+    def similarity_with(self, min_hash) -> float:
+        assert len(self) == len(min_hash)
+        return np.sum(self.signature == min_hash.signature) / len(self)
 
 
 def build_signature_matrix(
@@ -124,11 +120,11 @@ def build_signature_matrix(
     signature_len: int = 200,
     random_seed: int = 0,
 ) -> np.ndarray:
-    print("Building signature matrix...")
+    logger.info("Building signature matrix...")
 
     min_hashes = []
     tick = time.time()
-    print("Building MinHash for each sample...")
+    logger.info("Building MinHash for each sample...")
     for sample_id, sample in enumerate(samples):
         min_hashes.append(
             MinHash(
@@ -143,19 +139,16 @@ def build_signature_matrix(
             checkpoint_time = time.time()
             print(
                 f"\r{sample_id}/{len(samples)}----"
-                f"total time:{checkpoint_time - tick:.2f}s----"
+                f"total time: {checkpoint_time - tick:.2f}s----"
                 f"avg time: {(checkpoint_time - tick)/(sample_id + 1):.4f}s",
                 end="",
             )
 
-    print("\nBuilding signature matrix using MinHashes...")
-    signature_matrix = MinHash.build_signature_matrix(min_hashes)
+    print()
+    logger.info("\nBuilding signature matrix using MinHashes...")
+    signature_matrix = np.vstack([min_hash.signature for min_hash in min_hashes])
     tock = time.time()
-    print(f"Finshed, total time cost by building signature matrix {tock - tick:.2f}s")
+    logger.info(f"Finshed, total time cost by building signature matrix {tock - tick:.2f}s")
     np.save(output_path, signature_matrix)
-    print(f"Signature matrix has beed saved to {output_path}")
+    logger.info(f"Signature matrix has beed saved to {output_path}")
     return signature_matrix
-
-
-if __name__ == "__main__":
-    print(list(reproducible_randoms(5)))

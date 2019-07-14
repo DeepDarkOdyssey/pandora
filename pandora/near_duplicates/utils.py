@@ -6,7 +6,6 @@ import random
 import spacy
 import time
 
-nlp = spacy.load("en_core_web_sm")
 
 MAX_INT = 2 ** 32 - 1
 
@@ -45,35 +44,7 @@ def reproducible_randoms(
 
 
 def preprocess(text: str) -> List[str]:
-    tick = time.time()
-    doc = nlp(text)
-    tock = time.time()
-    print(f"Time cost by spacy: {tock-tick:.4f}s")
-    new_text = ""
-    prev_end_char = 0
-    if len(doc.ents) > 0:
-        for ent in doc.ents:
-            new_text += text[prev_end_char : ent.start_char] + ent.label_
-            prev_end_char = ent.end_char
-        new_text += text[prev_end_char:]
-    else:
-        new_text = text
-    doc = nlp(new_text)
-    result = []
-    for token in doc:
-        if not token.text.strip():
-            continue
-        if token.text in punctuation:
-            continue
-        if token.text.isupper():
-            result.append(token.text)
-        else:
-            result.append(token.lemma_)
-
-    return result
-
-
-def preprocess_v2(text: str) -> List[str]:
+    nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
     result = []
     entity = ""
@@ -102,14 +73,3 @@ def preprocess_v2(text: str) -> List[str]:
 
 def jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(set_a.intersection(set_b)) / len(set_a.union(set_b))
-
-
-if __name__ == "__main__":
-    print(
-        blake2b(
-            b"297577858302751513644148497292049019465169434518109223187548020943465598883",
-            digest_size=int(20 / 8),
-            salt=b"",
-        ).hexdigest()
-    )
-

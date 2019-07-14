@@ -1,12 +1,13 @@
-import numpy as np
-import time
-import os
-import requests
 from typing import Iterable, TextIO, List, Tuple, Optional, Callable, NoReturn
 from random import randint, choice, shuffle, seed
 from .utils import jaccard_similarity, generate_hash_fn, reproducible_randoms
 from .min_hash import MinHash, build_signature_matrix
 from .lsh import LSH
+from loguru import logger
+import numpy as np
+import time
+import os
+import requests
 
 
 def get_brown_corpus(
@@ -16,18 +17,18 @@ def get_brown_corpus(
     if not os.path.exists(save_dir):
         os.mkdir("tmp")
     if os.path.exists(os.path.join(save_dir, "brown_corpus.txt")):
-        print("Brown corpus already exists!")
+        logger.info("Brown corpus already exists!")
     else:
-        print("Downloading brown corpus...")
+        logger.info("Downloading brown corpus...")
         r = requests.get("http://www.sls.hawaii.edu/bley-vroman/brown_nolines.txt")
         with open(os.path.join(save_dir, "brown_corpus.txt"), "w") as f:
             f.write(r.text)
-        print(f"Brown corpus has been saved to {save_dir}")
+        logger.info(f"Brown corpus has been saved to {save_dir}")
     brown = open(os.path.join(save_dir, "brown_corpus.txt"))
     return brown
 
 
-def brown_generate(text_line_reader: Iterable):
+def brown_generate(text_line_reader: Iterable) -> Iterable[str]:
     paragraph = []
     for line in text_line_reader:
         if line.strip() == "":
@@ -41,7 +42,6 @@ def brown_generate(text_line_reader: Iterable):
 def build_test_set(
     data_gen: Iterable[str], max_samples: int, random_seed=0
 ) -> List[Tuple[str, int]]:
-
     seed(random_seed)
     samples = []
     class_id = 0
@@ -96,13 +96,13 @@ def minhash_test_one(
     max_samples: int = 10,
     random_seed: int = 0,
 ) -> NoReturn:
-    print("building test set...")
+    logger.info("building test set...")
     tick = time.time()
     data_gen = brown_generate(get_brown_corpus())
     samples = build_test_set(data_gen, max_samples, random_seed)
     tock = time.time()
-    print(f"Time cost by generating samples: {tock-tick:.2f}s")
-    print(f"Total samples: {len(samples)}")
+    logger.info(f"Time cost by generating samples: {tock-tick:.2f}s")
+    logger.info(f"Total samples: {len(samples)}")
 
     if not tokenizer:
         tokenizer = lambda string: string.strip().replace("\n", " ").split()
@@ -110,7 +110,7 @@ def minhash_test_one(
     if os.path.exists(sig_matrix_path):
         signature_matrix = np.load(sig_matrix_path, allow_pickle=True)
     else:
-        print("Signature matrix not exists!")
+        logger.info("Signature matrix not exists!")
         signature_matrix = build_signature_matrix(
             samples=samples,
             tokenizer=tokenizer,
@@ -120,7 +120,7 @@ def minhash_test_one(
             signature_len=signature_len,
             random_seed=random_seed,
         )
-    print("Signature matrix has been loaded")
+    logger.info("Signature matrix has been loaded")
 
     seed(os.urandom(10))
     chosen_sample = choice(samples)
@@ -136,13 +136,16 @@ def minhash_test_one(
     pred_labels = [0] * len(samples)
     assert len(true_labels) == len(pred_labels)
 
-    print("Finding near duplicates...")
+    logger.info("Finding near duplicates...")
+    tick = time.time()
     duplicates = chosen_min_hash.find_near_duplicates(signature_matrix, threshold)
-    print(f"Duplicates found :\n{duplicates}")
+    tock = time.time()
+    logger.info(f'Time cost by finding duplicates: {tock-tick:.6f}s')
+    logger.info(f"Duplicates found :\n{duplicates}")
     for sample_id, _ in duplicates:
         pred_labels[sample_id] = 1
     fpr, fnr = calculate_metrics(true_labels, pred_labels)
-    print(f"False postive rate: {fpr}, false negative rate: {fnr}")
+    logger.info(f"False postive rate: {fpr}, false negative rate: {fnr}")
 
 
 def minhash_test_all(
@@ -155,13 +158,13 @@ def minhash_test_all(
     max_samples: int = 10,
     random_seed: int = 0,
 ) -> NoReturn:
-    print("building test set...")
+    logger.info("building test set...")
     tick = time.time()
     data_gen = brown_generate(get_brown_corpus())
     samples = build_test_set(data_gen, max_samples, random_seed)
     tock = time.time()
-    print(f"Time cost by generating samples: {tock-tick:.2f}s")
-    print(f"Total samples: {len(samples)}")
+    logger.info(f"Time cost by generating samples: {tock-tick:.2f}s")
+    logger.info(f"Total samples: {len(samples)}")
 
     if not tokenizer:
         tokenizer = lambda string: string.strip().replace("\n", " ").split()
@@ -169,7 +172,7 @@ def minhash_test_all(
     if os.path.exists(sig_matrix_path):
         signature_matrix = np.load(sig_matrix_path, allow_pickle=True)
     else:
-        print("Signature matrix not exists!")
+        logger.info("Signature matrix not exists!")
         signature_matrix = build_signature_matrix(
             samples=samples,
             tokenizer=tokenizer,
@@ -179,9 +182,9 @@ def minhash_test_all(
             signature_len=signature_len,
             random_seed=random_seed,
         )
-    print("Signature matrix has been loaded")
+    logger.info("Signature matrix has been loaded")
 
-    print("Finding duplicates for each sample...")
+    logger.info("Finding duplicates for each sample...")
     avg_fpr, avg_fnr = 0, 0
     for sample_id, sample in enumerate(samples):
         true_labels = [1 if sample[1] == sample_[1] else 0 for sample_ in samples]
@@ -214,37 +217,37 @@ def minhash_test_all(
 
     tock = time.time()
     print()
-    print(f"Finished! Time cost: {tock - tick:.2f}s")
-    print(f"Average FPR: {avg_fpr/len(samples)}, average FNR: {avg_fnr / len(sample)}")
+    logger.info(f"Finished! Time cost: {tock - tick:.2f}s")
+    logger.info(f"Average FPR: {avg_fpr/len(samples)}, average FNR: {avg_fnr / len(sample)}")
 
 
 def lsh_test_one(
     tokenizer: Optional[Callable[[str], List[str]]] = None,
     sig_matrix_path: str = "./tmp/signature_matrix.npy",
     threshold: int = 1,
-    ngrams: int = 1,
+    ngrams: int = 4,
     permutation_way: str = "perm",
     signature_len: int = 200,
     max_samples: int = 10,
     random_seed: int = 0,
     num_bands: Optional[int] = 20,
     num_cols: Optional[int] = None,
-    num_buckets: int = 20
+    num_buckets: int = 20,
 ):
-    print("building test set...")
+    logger.info("Building test set...")
     tick = time.time()
     data_gen = brown_generate(get_brown_corpus())
     samples = build_test_set(data_gen, max_samples, random_seed)
     tock = time.time()
-    print(f"Time cost by generating samples: {tock-tick:.2f}s")
-    print(f"Total samples: {len(samples)}")
+    logger.info(f"Time cost by generating samples: {tock-tick:.2f}s")
+    logger.info(f"Total samples: {len(samples)}")
 
     if not tokenizer:
         tokenizer = lambda string: string.strip().replace("\n", " ").split()
     if os.path.exists(sig_matrix_path):
         signature_matrix = np.load(sig_matrix_path, allow_pickle=True)
     else:
-        print("Signature matrix not exists!")
+        logger.info("Signature matrix not exists!")
         signature_matrix = build_signature_matrix(
             samples=samples,
             tokenizer=tokenizer,
@@ -254,8 +257,12 @@ def lsh_test_one(
             signature_len=signature_len,
             random_seed=random_seed,
         )
-    print("Signature matrix has been loaded")
+    logger.info("Signature matrix has been loaded")
 
+    logger.info("Building LSH table...")
+    lsh = LSH(signature_matrix, num_bands, num_cols, num_buckets, seed)
+
+    logger.info("Random select a sample and build it's MinHash")
     seed(os.urandom(10))
     chosen_sample = choice(samples)
     chosen_min_hash = MinHash(
@@ -266,9 +273,21 @@ def lsh_test_one(
         signature_len=signature_len,
     )
 
-    lsh = LSH(signature_matrix, num_bands, num_cols, num_buckets, seed)
-    print(lsh.get_candidates(chosen_min_hash.signature, threshold))
+    logger.info("Searching for candidates...")
+    tick = time.time()
+    candidate_ids = lsh.get_candidates(chosen_min_hash.signature, threshold)
+    tock = time.time()
+    logger.info(f"Finished, time cost by searching: {tock-tick:.6f}s")
+
+    true_labels = [1 if chosen_sample[1] == sample[1] else 0 for sample in samples]
+    pred_labels = [0] * len(samples)
+    assert len(true_labels) == len(pred_labels)
+    for sample_id in candidate_ids:
+        pred_labels[sample_id] = 1
+    fpr, fnr = calculate_metrics(true_labels, pred_labels)
+    logger.info(f"False postive rate: {fpr}, false negative rate: {fnr}")
 
 
 if __name__ == "__main__":
-    lsh_test_one()
+    # lsh_test_one(threshold=20)
+    minhash_test_one()

@@ -10,6 +10,7 @@ black = "*"
 [packages]
 spacy = "*"
 numpy = "*"
+loguru = "*"
 
 [requires]
 python_version = "3.7"
