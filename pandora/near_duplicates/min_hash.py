@@ -59,7 +59,7 @@ class MinHash(object):
                 for rand_bytes in reproducible_randoms(
                     signature_len, random_seed, "bytes"
                 ):
-                    self.hash_fns.append(generate_hash_fn(salt=rand_bytes[:16]))
+                    self.hash_fns.append(generate_hash_fn(salt=rand_bytes))
             self.perms = None
         else:
             raise ValueError("Permutation way only support 'perm' or 'hash'.")

@@ -1,6 +1,7 @@
 from typing import Callable, List, Union, Optional
 from hashlib import blake2b, md5
 from string import punctuation
+from math import ceil
 import numpy as np
 import random
 import spacy
@@ -11,9 +12,9 @@ MAX_INT = 2 ** 32 - 1
 
 
 def generate_hash_fn(
-    bit_len: int = 32, salt: Optional[bytes] = None, encoding: str = "utf8"
+    bit_len: int = 32, salt: bytes = b'', encoding: str = "utf8"
 ) -> Callable[[Union[str, bytes]], int]:
-    digest_size = int(bit_len / 8)
+    digest_size = ceil(bit_len / 8)
 
     def hash_fn(inputs: Union[str, bytes]) -> int:
         if type(inputs) is str:

@@ -1,5 +1,5 @@
 from typing import Iterable, TextIO, List, Tuple, Optional, Callable, NoReturn
-from random import randint, choice, shuffle, seed
+from random import randint, randrange, choice, shuffle, seed
 from .utils import jaccard_similarity, generate_hash_fn, reproducible_randoms
 from .min_hash import MinHash, build_signature_matrix
 from .lsh import LSH
@@ -87,6 +87,7 @@ def calculate_metrics(
 
 
 def minhash_test_one(
+    target_id: Optional[int] = None,
     tokenizer: Optional[Callable[[str], List[str]]] = None,
     sig_matrix_path: str = "./tmp/signature_matrix.npy",
     threshold: float = 0.6,
@@ -104,6 +105,10 @@ def minhash_test_one(
     logger.info(f"Time cost by generating samples: {tock-tick:.2f}s")
     logger.info(f"Total samples: {len(samples)}")
 
+    if not target_id:
+        logger.info("Random select a sample as target")
+        seed(os.urandom(10))
+        target_id = randrange(0, len(samples))
     if not tokenizer:
         tokenizer = lambda string: string.strip().replace("\n", " ").split()
 
@@ -122,8 +127,7 @@ def minhash_test_one(
         )
     logger.info("Signature matrix has been loaded")
 
-    seed(os.urandom(10))
-    chosen_sample = choice(samples)
+    chosen_sample = samples[target_id]
     chosen_min_hash = MinHash(
         tokens=tokenizer(chosen_sample[0]),
         ngrams=ngrams,
@@ -139,9 +143,10 @@ def minhash_test_one(
     logger.info("Finding near duplicates...")
     tick = time.time()
     duplicates = chosen_min_hash.find_near_duplicates(signature_matrix, threshold)
+    duplicate_labels = [samples[i][1] for i, sim in duplicates]
     tock = time.time()
-    logger.info(f'Time cost by finding duplicates: {tock-tick:.6f}s')
-    logger.info(f"Duplicates found :\n{duplicates}")
+    logger.info(f"Time cost by finding duplicates: {tock-tick:.6f}s")
+    logger.info(f"Duplicates found :\n{list(zip(duplicates, duplicate_labels))}")
     for sample_id, _ in duplicates:
         pred_labels[sample_id] = 1
     fpr, fnr = calculate_metrics(true_labels, pred_labels)
@@ -218,10 +223,13 @@ def minhash_test_all(
     tock = time.time()
     print()
     logger.info(f"Finished! Time cost: {tock - tick:.2f}s")
-    logger.info(f"Average FPR: {avg_fpr/len(samples)}, average FNR: {avg_fnr / len(sample)}")
+    logger.info(
+        f"Average FPR: {avg_fpr/len(samples)}, average FNR: {avg_fnr / len(sample)}"
+    )
 
 
 def lsh_test_one(
+    target_id: Optional[int]=None,
     tokenizer: Optional[Callable[[str], List[str]]] = None,
     sig_matrix_path: str = "./tmp/signature_matrix.npy",
     threshold: int = 1,
@@ -230,8 +238,8 @@ def lsh_test_one(
     signature_len: int = 200,
     max_samples: int = 10,
     random_seed: int = 0,
-    num_bands: Optional[int] = 20,
-    num_cols: Optional[int] = None,
+    num_bands: Optional[int] = None,
+    num_cols: Optional[int] = 5,
     num_buckets: int = 20,
 ):
     logger.info("Building test set...")
@@ -241,6 +249,11 @@ def lsh_test_one(
     tock = time.time()
     logger.info(f"Time cost by generating samples: {tock-tick:.2f}s")
     logger.info(f"Total samples: {len(samples)}")
+
+    if not target_id:
+        logger.info("Random select a sample as target")
+        seed(os.urandom(10))
+        target_id = randrange(0, len(samples))
 
     if not tokenizer:
         tokenizer = lambda string: string.strip().replace("\n", " ").split()
@@ -262,9 +275,7 @@ def lsh_test_one(
     logger.info("Building LSH table...")
     lsh = LSH(signature_matrix, num_bands, num_cols, num_buckets, seed)
 
-    logger.info("Random select a sample and build it's MinHash")
-    seed(os.urandom(10))
-    chosen_sample = choice(samples)
+    chosen_sample = samples[target_id]
     chosen_min_hash = MinHash(
         tokens=tokenizer(chosen_sample[0]),
         ngrams=ngrams,
@@ -275,19 +286,19 @@ def lsh_test_one(
 
     logger.info("Searching for candidates...")
     tick = time.time()
-    candidate_ids = lsh.get_candidates(chosen_min_hash.signature, threshold)
+    candidates = lsh.get_candidates(chosen_min_hash.signature, threshold)
     tock = time.time()
     logger.info(f"Finished, time cost by searching: {tock-tick:.6f}s")
+    logger.info(f"Candidates found: {candidates}")
 
     true_labels = [1 if chosen_sample[1] == sample[1] else 0 for sample in samples]
     pred_labels = [0] * len(samples)
     assert len(true_labels) == len(pred_labels)
-    for sample_id in candidate_ids:
+    for sample_id, _ in candidates:
         pred_labels[sample_id] = 1
     fpr, fnr = calculate_metrics(true_labels, pred_labels)
     logger.info(f"False postive rate: {fpr}, false negative rate: {fnr}")
 
 
 if __name__ == "__main__":
-    # lsh_test_one(threshold=20)
-    minhash_test_one()
+    lsh_test_one(8305, ngrams=3, signature_len=1000)

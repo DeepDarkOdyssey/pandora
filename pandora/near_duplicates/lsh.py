@@ -1,4 +1,5 @@
 import numpy as np
+from math import ceil
 from typing import Dict, DefaultDict, Optional
 from collections import defaultdict
 from .utils import generate_hash_fn, reproducible_randoms
@@ -16,19 +17,21 @@ class LSH(object):
         self.feature_matrix = feature_matrix
         if num_cols:
             self.cols_per_band = num_cols
+            self.num_bands = ceil(self.feature_matrix.shape[1] / num_cols)
         elif num_bands:
-            self.cols_per_band = self.feature_matrix.shape[1] // num_bands + 1
+            self.num_bands = num_bands
+            self.cols_per_band = int(self.feature_matrix.shape[1] / num_bands)
         else:
             raise TypeError("Either 'num_bands' or 'num_cols should be specified")
 
         self.hash_fns = []
-        for rand_bytes in reproducible_randoms(num_bands, random_seed, "bytes"):
+        for rand_bytes in reproducible_randoms(self.num_bands, random_seed, "bytes"):
             self.hash_fns.append(generate_hash_fn(num_buckets, salt=rand_bytes))
 
         self.hash_table = self.build_hash_table()
 
     def build_hash_table(self) -> DefaultDict[int, Dict[int, int]]:
-        hash_table = defaultdict(dict)
+        hash_table = defaultdict(set)
         for band_id, hash_fn in enumerate(self.hash_fns):
             band = self.feature_matrix[
                 :, band_id * self.cols_per_band : (band_id + 1) * self.cols_per_band
@@ -38,7 +41,7 @@ class LSH(object):
             )
             for row_id, hash_val in enumerate(hashed_band):
                 # TODO: figure out how to deal with hash collision
-                hash_table[hash_val][row_id] = band_id
+                hash_table[hash_val].add(row_id)
         return hash_table
 
     def get_candidates(self, inputs: np.ndarray, threshold: int = 1) -> list:
@@ -50,9 +53,8 @@ class LSH(object):
             hashed_band = hash_fn(band.tobytes())
 
             if hashed_band in self.hash_table:
-                for row_id in self.hash_table[hashed_band].keys():
-                    candidates[row_id] += 20
-        candidate_ids = [
-            row_id for row_id, count in candidates.items() if count >= threshold
-        ]
-        return candidate_ids
+                for row_id in self.hash_table[hashed_band]:
+                    candidates[row_id] += 1
+        return sorted(
+            [candidate for candidate in candidates.items() if candidate[1] >= threshold]
+        )
