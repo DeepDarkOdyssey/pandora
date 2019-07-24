@@ -1,4 +1,5 @@
 .vscode/
+*_cache/
 data/
 tmp/
 *.pyc

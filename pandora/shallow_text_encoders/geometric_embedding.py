@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Callable, List, Union
+from typing import Iterable, Callable, List, Union, Dict
 from loguru import logger
 
 
@@ -21,15 +21,19 @@ class GEM(object):
         self.top_r = top_r
         self.corpus_singular_vectors = corpus_singular_vectors
         self.corpus_singular_values = corpus_singular_values
+        self.sentence_embedding = self.build_sentence_vector(
+            self.token_embeddings,
+            self.corpus_singular_vectors,
+            self.corpus_singular_values,
+        )
 
     @staticmethod
     def build_corpus_principles(
-        corpus: List[str],
+        corpus: Iterable[str],
         tokenizer: Callable[[str], List[str]],
         token2emb: Callable[[str], np.array],
-        top_k: int = 3,
+        top_k: int = 5,
     ):
-        assert len(corpus) >= top_k
         sentence_embeddings = []
         for sentence in corpus:
             tokens = tokenizer(sentence)
@@ -63,8 +67,8 @@ class GEM(object):
             sorted_sgl_values.append(sgl_val)
 
         return (
-            np.array(sorted_sgl_vectors[: top_r]),
-            np.array(sorted_sgl_values[: top_r]),
+            np.array(sorted_sgl_vectors[:top_r]),
+            np.array(sorted_sgl_values[:top_r]),
         )
 
     def get_window_matrix(self, i: int):
