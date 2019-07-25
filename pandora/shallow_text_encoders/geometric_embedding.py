@@ -1,121 +1,105 @@
 import numpy as np
-from typing import Iterable, Callable, List, Union, Dict
-from loguru import logger
+from typing import Callable, List, Union, Tuple, Dict
+from .vocab import BaseVocab, Tokenizer
 
 
 class GEM(object):
     def __init__(
         self,
-        string: str,
         tokenizer: Callable[[str], List[str]],
-        token2emb: Callable[[str], np.array],
+        token2embed: Dict[str, np.array],
         corpus_singular_vectors: np.array,
         corpus_singular_values: np.array,
-        window_size: int = 3,
-        top_r: int = 3,
+        window_size: int = 7,
+        top_k: int = 45,
+        top_r: int = 17,
     ):
-        tokens = tokenizer(string)
-        self.num_tokens = len(tokens)
-        self.token_embeddings = np.hstack([token2emb(token) for token in tokens])
+        self.tokenizer = tokenizer
         self.window_size = window_size
+        self.top_k = top_k
         self.top_r = top_r
-        self.corpus_singular_vectors = corpus_singular_vectors
-        self.corpus_singular_values = corpus_singular_values
-        self.sentence_embedding = self.build_sentence_vector(
-            self.token_embeddings,
-            self.corpus_singular_vectors,
-            self.corpus_singular_values,
-        )
+        self.num_tokens = len(tokens)
+        self.window_size = window_size
+        self.embed_size = iter(token2embed.values()).shape[0]
+        self.corpus_singular_vectors, self.corpus_singular_values = None, None
 
-    @staticmethod
     def build_corpus_principles(
-        corpus: Iterable[str],
-        tokenizer: Callable[[str], List[str]],
-        token2emb: Callable[[str], np.array],
-        top_k: int = 5,
-    ):
-        sentence_embeddings = []
-        for sentence in corpus:
-            tokens = tokenizer(sentence)
-            token_matrix = np.hstack([token2emb(token) for token in tokens])
-            u, s, _ = np.linalg.svd(token_matrix)
-            coarse_sen_emb = np.sum(s ** 3 * u[:, : s.shape[0]], axis=1).reshape(-1, 1)
-            sentence_embeddings.append(coarse_sen_emb)
-        sentence_embedding_matrix = np.hstack(sentence_embeddings)
+        self, corpus: List[str], vocab: BaseVocab, tokenizer: Tokenizer, power: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        assert len(corpus) >= self.top_k
+        coarse_sentence_embeddings = np.zeros((self.embed_size, len(corpus)))
+        for i, text in enumerate(corpus):
+            token_embeddings = vocab.text2embed(text, tokenizer)
+            U, s, _ = np.linalg.svd(token_embeddings, full_matrices=False)
+            coarse_sen_emb = U @ (s ** power)
+            coarse_sentence_embeddings[:, i] = coarse_sen_emb
 
-        u, s, _ = np.linalg.svd(sentence_embedding_matrix)
-        return u[:, :top_k], s[:top_k]
+        U, s, _ = np.linalg.svd(coarse_sentence_embeddings, full_matrices=False)
+        self.corpus_singular_vectors = U[:, : self.top_k]
+        self.corpus_singular_values = s[: self.top_k]
+        return U[:, : self.top_k], s[: self.top_k]
 
-    @staticmethod
     def rerank_principles(
-        token_embeddings: np.ndarray,
-        singular_vectors: np.ndarray,
-        singular_values: np.ndarray,
-        top_r: int,
-    ):
-        rank_values = (
+        self, token_embeddings: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        rank_values: np.ndarray = (
             np.linalg.norm(
-                np.matmul(token_embeddings.T, singular_vectors), ord=2, axis=0
+                token_embeddings.T @ self.corpus_singular_vectors, ord=2, axis=0
             )
-            * singular_values
+            * self.corpus_singular_values
         )
-        sorted_sgl_vectors, sorted_sgl_values = [], []
-        for _, sgl_vec, sgl_val in sorted(
-            zip(rank_values, singular_vectors, singular_values), reverse=True
-        ):
-            sorted_sgl_vectors.append(sgl_vec)
-            sorted_sgl_values.append(sgl_val)
-
+        rank_indexes = np.argsort(rank_values)[::-1][: self.top_r]
         return (
-            np.array(sorted_sgl_vectors[:top_r]),
-            np.array(sorted_sgl_values[:top_r]),
+            self.corpus_singular_vectors[:, rank_indexes],
+            self.corpus_singular_values[:, rank_indexes],
         )
 
-    def get_window_matrix(self, i: int):
-        left_context = self.token_embeddings[:, i - self.window_size : i]
-        right_context = self.token_embeddings[:, i + 1 : i + self.window_size + 1]
+    def window_matrix(self, i: int, token_embeddings: np.ndarray) -> np.ndarray:
+        left_context = token_embeddings[:, i - self.window_size : i]
+        right_context = token_embeddings[:, i + 1 : i + self.window_size + 1]
         window_matrix = np.hstack(
-            [left_context, right_context, self.token_embeddings[:, i]]
+            [left_context, right_context, token_embeddings[:, [i]]]
         )
         return window_matrix
 
     def get_novelty_score(self, r_i: np.ndarray):
-        return np.math.exp(r_i[-1] / np.linalg.norm(r_i, 2))
+        return np.math.exp(r_i[-1] / np.linalg.norm(r_i, ord=2) + 1e-18)
 
-    def get_significance_score(self, r_i: np.ndarray):
-        return r_i / (2 * self.window_size + 1)
+    def get_significance_score(self, r_i: np.ndarray, window_size: int):
+        return r_i[-1] / window_size
 
     def get_uniqueness_score(
         self, q_i: np.ndarray, singular_vectors: np.ndarray, singular_values: np.ndarray
     ):
         uniqueness_score = np.math.exp(
-            -np.linalg.norm(singular_values * np.matmul(q_i.T, singular_vectors), ord=2)
-            / q_i.shape[0]
+            -np.linalg.norm(singular_values * (q_i @ singular_vectors), ord=2)
+            / singular_values.shape[0]
         )
         return uniqueness_score
 
-    def build_sentence_vector(
+    def encode_text(
         self,
         token_embeddings: np.ndarray,
-        singular_vectors: np.ndarray,
-        singular_values: np.ndarray,
+        top_r: int,
     ):
-        sentence_vector = np.zeros((token_embeddings.shape[0], 1))
+        singular_vectors, singular_values = self.rerank_principles(token_embeddings)
+        token_weights = []
         for i in range(token_embeddings.shape[1]):
-            window_matrix = self.get_window_matrix(i)
+            window_matrix = self.window_matrix(i, token_embeddings)
             Q_i, R_i = np.linalg.qr(window_matrix)
             q_i = Q_i[:, -1]
             r_i = R_i[:, -1]
             novelty_score = self.get_novelty_score(r_i)
-            significance_score = self.get_significance_score(r_i)
+            significance_score = self.get_significance_score(r_i, window_matrix.shape[1])
             uniqueness_score = self.get_uniqueness_score(
                 q_i, singular_vectors, singular_values
             )
             token_weight = novelty_score + significance_score + uniqueness_score
-            sentence_vector += token_weight * token_embeddings[:, i]
-
-        sentence_vector -= singular_values @ singular_values.T @ sentence_vector
-        return sentence_vector
+            token_weights.append(token_weight)
+        
+        text_embedding = np.array(token_weights) @ token_embeddings
+        text_embedding -= singular_vectors @ singular_vectors.T @ text_embedding
+        return np.ravel(text_embedding)
 
 
 def gram_schmidt_process():
