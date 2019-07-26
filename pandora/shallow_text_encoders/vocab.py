@@ -1,5 +1,6 @@
 from typing import List, Optional, Union, Iterable, Callable, Generator, Dict
 from collections import Counter, defaultdict
+from .helpers import LazyDict
 import numpy as np
 
 Tokenizer = Callable[[str], List[str]]
@@ -10,33 +11,42 @@ class BaseVocab(object):
     def __init__(
         self,
         tokens: List,
-        embedding_dict: Optional[Dict[str, np.ndarray]],
+        embedding_dict: Optional[Dict[str, np.ndarray]] = None,
         unk: Optional[str] = None,
         pad: Optional[str] = None,
     ):
         self.id2token = tokens
-        offset = 0
         if unk:
             self.id2token.insert(0, unk)
-            offset += 1
         if pad:
             self.id2token.insert(0, pad)
-            offset += 1
 
-        self.token2id = dict(((token, i) for i, token in enumerate(self.id2token)))
+        if unk:
+            self.token2id = defaultdict(lambda: self.id2token.index(unk))
+            for i, token in enumerate(self.id2token):
+                self.token2id[token] = i
+        else:
+            self.token2id = dict(((token, i) for i, token in enumerate(self.id2token)))
 
         if embedding_dict:
             self.embedding_matrix = np.zeros(
-                (len(self), iter(embedding_dict.values()).shape[0])
+                (len(self), next(iter(embedding_dict.values())).shape[0])
             )
 
-            if unk:
-                unk_embed = np.mean(np.array(list(embedding_dict.values())), axis=0)
-                self.token2embed = defaultdict(lambda: unk_embed)
-            else:
-                self.token2embed = {}
-            for token in self.id2token:
-                self.embedding_matrix[self.token2id[token]] = embedding_dict[token]
+            unk_embed = np.mean(np.array(list(embedding_dict.values())), axis=0)
+            for i, token in enumerate(self.id2token):
+                if token == pad:
+                    continue
+                if token in embedding_dict:
+                    self.embedding_matrix[i] = embedding_dict[token]
+                else:
+                    self.embedding_matrix[i] = unk_embed
+            self.token2embed = LazyDict(
+                lambda token: self.embedding_matrix[self.token2id[token]]
+            )
+        else:
+            self.embedding_matrix = None
+            self.token2embed = None
 
     @classmethod
     def create_from(cls, *args, **kwargs):
@@ -71,15 +81,16 @@ class BaseVocab(object):
     def __getitem__(self, id_or_string: Union[int, str]):
         if isinstance(id_or_string, int):
             token = self.id2token[id_or_string]
-            if self.token2embed:
-                return token, self.token2embed[token]
-            else:
+            if self.token2embed is None:
                 return token
-        elif isinstance(id_or_string, str):
-            if self.token2embed:
-                return self.token2id[id_or_string], self.token2embed[id_or_string]
             else:
-                return self.token2id[id_or_string]
+                return token, self.token2embed[token]
+        elif isinstance(id_or_string, str):
+            token_id = self.token2id[id_or_string]
+            if self.token2embed is None:
+                return token_id
+            else:
+                return token_id, self.embedding_matrix[token_id]
         else:
             raise TypeError("Only support `str` and `int`")
 
@@ -89,4 +100,3 @@ class LexVecVocab(BaseVocab):
     def create_from(cls, lexvec_dict: LexVecDict) -> BaseVocab:
         tokens = list(lexvec_dict.keys())
         return cls(tokens, lexvec_dict, unk="<UNK>", pad="<PAD>")
-
